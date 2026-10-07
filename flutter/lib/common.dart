@@ -1632,6 +1632,7 @@ bool option2bool(String option, String value) {
 String bool2option(String option, bool b) {
   String res;
   if (option.startsWith('enable-') &&
+      option != kOptionEnableTcpPunch &&
       option != kOptionEnableUdpPunch &&
       option != kOptionEnableIpv6Punch &&
       option != kOptionEnableWebrtc) {
