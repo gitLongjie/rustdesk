@@ -17,7 +17,37 @@ class _FakeFFI implements FFI {
 }
 
 void main() {
-  test('the quality monitor names the WebRTC transport only on web', () {
+  test('the quality monitor distinguishes P2P from relay for every transport',
+      () {
+    final ffi = _FakeFFI();
+    final model = QualityMonitorModel(WeakReference(ffi));
+    expect(model.connectionType, isNull);
+    for (final entry in {
+      'TCP': 'TCP',
+      'UDP': 'UDP',
+      'IPv6': 'UDP',
+      'WebRTC': 'UDP',
+    }.entries) {
+      ffi.ffiModel.setConnectionType('peer', true, true, entry.key);
+      expect(model.connectionType, 'P2P');
+      expect(model.transport, entry.value);
+    }
+    for (final streamType in ['Relay', 'WebSocket', 'WebRTC']) {
+      ffi.ffiModel.setConnectionType('peer', true, false, streamType);
+      expect(model.connectionType, 'Relay Connection');
+      expect(model.transport, 'Relay');
+    }
+    ffi.ffiModel.clear();
+    expect(model.connectionType, isNull);
+  });
+
+  test('connection text hides WebRTC implementation details', () {
+    expect(normalizeConnectionTransport(true, 'WebRTC'), 'UDP');
+    expect(normalizeConnectionTransport(false, 'WebRTC'), 'Relay');
+  });
+
+  test('the quality monitor keeps the WebRTC compatibility label off desktop',
+      () {
     final ffi = _FakeFFI();
     ffi.ffiModel.cachedPeerData.streamType = 'WebRTC';
     final model = QualityMonitorModel(WeakReference(ffi));

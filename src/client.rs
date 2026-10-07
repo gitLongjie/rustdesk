@@ -211,10 +211,9 @@ impl Drop for OffererGuard {
     }
 }
 
-/// Race WebRTC against the other transports, preferring P2P: `select_ok` would always pick the
-/// relay, whose TCP connect beats ICE + DTLS + SCTP by an order of magnitude. An `is_p2p` result
-/// wins outright; a relayed one — from either side, since `webrtc_fut` is a whole punch attempt
-/// that can also end in a relay — is held for `window_ms` to give the other side a chance.
+/// Race transports, preferring UDP/IPv6 and WebRTC P2P. `select_ok` can let a fast TCP punch or
+/// relay cancel a viable UDP attempt. An `is_p2p` result wins outright; any other successful
+/// result is held for `window_ms` to give the preferred transport a chance.
 ///
 /// `others` must be non-empty (`select_ok` requires it).
 async fn race_transports_prefer_webrtc<'a, T: 'a>(
@@ -341,6 +340,58 @@ fn request_allows_tcp_punch(webrtc_sdp_offer: &str) -> bool {
     // WebRTC trickle ICE retains the rendezvous socket as its signaling bridge. Only a request
     // without an offer may close that socket and reuse its local address for TCP punching.
     webrtc_sdp_offer.is_empty()
+}
+
+fn tcp_punch_allowed_for_connection(
+    tcp_allowed: bool,
+    udp_transport_available: bool,
+    webrtc_sdp_offer: &str,
+) -> bool {
+    tcp_allowed && !udp_transport_available && request_allows_tcp_punch(webrtc_sdp_offer)
+}
+
+fn force_relay_without_punch_transport(
+    force_relay: bool,
+    tcp_allowed: bool,
+    udp_nat_port: u16,
+    ipv6_available: bool,
+    webrtc_available: bool,
+) -> bool {
+    force_relay
+        || (!tcp_allowed
+            && udp_nat_port == 0
+            && !ipv6_available
+            && !webrtc_available)
+}
+
+fn punch_request_for_attempt(
+    request: &hbb_common::rendezvous_proto::PunchHoleRequest,
+    attempt: u32,
+) -> hbb_common::rendezvous_proto::PunchHoleRequest {
+    let mut request = request.clone();
+    if attempt >= 3 {
+        request.force_relay = true;
+    }
+    request
+}
+
+fn is_preferred_direct_transport(direct: bool, transport: &str) -> bool {
+    direct && matches!(transport, "UDP" | "IPv6" | "WebRTC")
+}
+
+fn report_transport_type(
+    transport: &'static str,
+    direct: bool,
+    webrtc_protocol: Option<&'static str>,
+) -> &'static str {
+    if transport != "WebRTC" {
+        return transport;
+    }
+    if direct {
+        webrtc_protocol.unwrap_or("WebRTC")
+    } else {
+        "Relay"
+    }
 }
 
 /// TCP punch is a user option like the other direct transports, but it is also the backstop:
@@ -510,6 +561,7 @@ impl Client {
         } else {
             None
         };
+        let udp_transport_available = udp.0.is_some() || ipv6.is_some();
         // WebRTC uses its own ICE sockets and does not depend on the legacy UDP punch socket.
         // When this request carries an offer, `_start_inner` keeps its rendezvous socket solely
         // for trickle signaling; a separate offer-less request owns any TCP punch attempt.
@@ -547,7 +599,11 @@ impl Client {
         // relay.
         if interface.is_force_relay()
             || (udp.0.is_none() && !has_webrtc_offerer)
-            || !tcp_punch_allowed()
+            || !tcp_punch_allowed_for_connection(
+                tcp_punch_allowed(),
+                udp_transport_available,
+                "",
+            )
         {
             return fut.await;
         }
@@ -571,20 +627,13 @@ impl Client {
             contained,
         )
         .boxed();
-        if has_webrtc_offerer {
-            return race_transports_prefer_webrtc(
-                preferred_fut,
-                vec![fallback_fut],
-                Self::relay_fallback_delay_ms(),
-                |result| result.0 .1,
-            )
-            .await;
-        }
-        let connect_futures = vec![preferred_fut, fallback_fut];
-        match select_ok(connect_futures).await {
-            Ok(conn) => Ok((conn.0 .0, conn.0 .1, conn.0 .2)),
-            Err(e) => Err(e),
-        }
+        race_transports_prefer_webrtc(
+            preferred_fut,
+            vec![fallback_fut],
+            Self::relay_fallback_delay_ms(),
+            |result| is_preferred_direct_transport(result.0 .1, result.0 .4),
+        )
+        .await
     }
 
     fn is_expected_webrtc_ice_candidate(ice: &IceCandidate, session_key: &str) -> bool {
@@ -638,27 +687,9 @@ impl Client {
         }
     }
 
-    /// UDP-NAT-test wait when the TCP clock is implausible (see TCP_RTT_PLAUSIBLE_MIN). The
-    /// normal bound is `rtt / 2`: the test has been running since before the TCP connect, so on
-    /// a network where TCP RTT ~ UDP RTT its response has already landed. A transparent TCP
-    /// proxy — a TUN-mode VPN on the host, or a redirect-mode proxy on the LAN gateway (soft
-    /// router), which fakes the handshake for every device behind it — breaks that by answering
-    /// in ~3ms while the real UDP round trip is hundreds of ms: the window collapsed to ~1.5ms,
-    /// udp_port stayed 0, and UDP punch never ran on such networks. The wait still exits the instant the port
-    /// arrives, so a genuinely nearby server (LAN hbbs) pays nothing; only UDP-dead networks
-    /// wait out the full grace, and only on this round — the pure-TCP fallback round never
-    /// waits. Sized as a ceiling on real-world rendezvous RTTs plus one 20ms retransmit
-    /// (intercontinental ~300ms); paths slower than that lose UDP punch under a proxy, which
-    /// is today's behavior, not a regression.
+    /// Give UDP NAT discovery at least one WAN round trip plus a retransmit, even when a TCP
+    /// proxy answers the handshake locally. A received mapping ends the wait immediately.
     const UDP_NAT_TEST_GRACE: Duration = Duration::from_millis(400);
-
-    /// Below this, the measured TCP connect time is not a believable WAN round trip — it was
-    /// answered inside the LAN (host TUN proxy, gateway transparent proxy, or a genuinely local
-    /// server) — and must not be used to size the UDP window.
-    /// Generous on purpose: over-triggering costs nothing (the wait exits on arrival, and a
-    /// UDP-dead round loses to the racing fallback anyway), while a tight bound would let a
-    /// busy proxy's occasional ~80ms handshake slip through and silently drop UDP punch.
-    const TCP_RTT_PLAUSIBLE_MIN: Duration = Duration::from_millis(100);
 
     /// Delay before re-sending an ICE candidate over the rendezvous route once. The hop to the
     /// peer can be UDP (the controlled side's mediator channel), so a candidate can be lost in
@@ -879,20 +910,11 @@ impl Client {
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
         }
-        // A token or switch code has always taken this socket straight to the punch without
-        // waiting for the UDP NAT test. The WebRTC exchange does not replace that wait, it only
-        // spends part of the same budget, so what is left of it is waited out here and a result
-        // that has already arrived is taken at once.
-        if let Some(udp) = udp.1.as_ref().filter(|_| !legacy_secure) {
+        // Authenticated requests need the same UDP mapping as anonymous ones. The key exchange
+        // spends this wait budget; a response that has already arrived is taken immediately.
+        if let Some(udp) = udp.1.as_ref() {
             let tm = udp_nat_wait_from;
-            // rtt is the TCP connect time. When it is too short to be a real WAN round trip it
-            // says nothing about the UDP path (a TUN VPN or the LAN gateway answered the
-            // handshake, not the server), so fall back to the flat grace; otherwise trust it.
-            let udp_nat_wait = if rtt < Self::TCP_RTT_PLAUSIBLE_MIN {
-                Self::UDP_NAT_TEST_GRACE
-            } else {
-                rtt / 2
-            };
+            let udp_nat_wait = (rtt / 2).max(Self::UDP_NAT_TEST_GRACE);
             loop {
                 let port = *udp.lock().unwrap();
                 if port > 0 {
@@ -917,7 +939,19 @@ impl Client {
             .and_then(|g| g.stream())
             .map(|stream| stream.local_endpoint().to_owned())
             .unwrap_or_default();
-        let allow_tcp_punch = tcp_punch_allowed() && request_allows_tcp_punch(&webrtc_sdp_offer);
+        let udp_transport_available = udp_nat_port > 0 || ipv6.1.is_some();
+        let allow_tcp_punch = tcp_punch_allowed_for_connection(
+            tcp_punch_allowed(),
+            udp_transport_available,
+            &webrtc_sdp_offer,
+        );
+        let force_relay = force_relay_without_punch_transport(
+            interface.is_force_relay(),
+            allow_tcp_punch,
+            udp_nat_port,
+            ipv6.1.is_some(),
+            !webrtc_sdp_offer.is_empty(),
+        );
         // Every direct transport this round carries, not one of them: a round can carry several
         // at once (a NAT port and an offer and a v6 address), and since the TCP punch became a
         // switch it can carry none — a single name had to misreport both. `relay` is not a punch,
@@ -940,7 +974,7 @@ impl Client {
         } else {
             transports.join("+")
         };
-        msg_out.set_punch_hole_request(PunchHoleRequest {
+        let punch_request = PunchHoleRequest {
             id: peer.to_owned(),
             token: token.to_owned(),
             nat_type: nat_type.into(),
@@ -948,7 +982,7 @@ impl Client {
             conn_type: conn_type.into(),
             version: crate::VERSION.to_owned(),
             udp_port: udp_nat_port as _,
-            force_relay: interface.is_force_relay(),
+            force_relay,
             socket_addr_v6: ipv6.1.unwrap_or_default(),
             switch_code,
             // The offer's envelope itself declares its ICE policy (`ice_policy: "all"` under
@@ -956,7 +990,7 @@ impl Client {
             // type despite force_relay instead of requiring TURN.
             webrtc_sdp_offer,
             ..Default::default()
-        });
+        };
         let webrtc_session_key = webrtc_offerer
             .as_ref()
             .and_then(|guard| guard.stream())
@@ -965,6 +999,11 @@ impl Client {
         let mut webrtc_sdp_answer = String::new();
         let mut pending_webrtc_ice = Vec::<String>::new();
         'punch_attempts: for i in 1..=3 {
+            let request = punch_request_for_attempt(&punch_request, i);
+            if i == 3 && !punch_request.force_relay {
+                log::info!("direct punch attempts failed; requesting relay fallback");
+            }
+            msg_out.set_punch_hole_request(request);
             log::info!(
                 "#{} {} punch attempt with {}, id: {}",
                 i,
@@ -1242,6 +1281,12 @@ impl Client {
                         };
                         // `direct` came from the winning future, which resolved it while the pc was
                         // definitely alive — the race needed it to pick a winner at all.
+                        let webrtc_protocol = if typ == "WebRTC" {
+                            conn.webrtc_transport_protocol().await
+                        } else {
+                            None
+                        };
+                        let reported_typ = report_transport_type(typ, direct, webrtc_protocol);
                         // Secured and WebRTC won: disarm so the returned conn keeps the pc alive.
                         if typ == "WebRTC" {
                             if let Some(guard) = webrtc_guard.take() {
@@ -1249,7 +1294,7 @@ impl Client {
                             }
                         }
                         return Ok((
-                            (conn, direct, pk, kcp, typ),
+                            (conn, direct, pk, kcp, reported_typ),
                             (feedback, rendezvous_server),
                             false,
                         ));
@@ -1506,16 +1551,14 @@ impl Client {
                 }
                 .boxed()
             });
-        // Prefer P2P: a direct result wins outright, a relayed WebRTC (TURN) is held for the
-        // window so a direct punch can still land. Falls back to plain select_ok when only one
-        // kind is present.
+        // Prefer UDP/IPv6 or direct WebRTC; hold TCP and TURN while those attempts are viable.
         let direct_result = match (webrtc_fut, direct_futures.is_empty()) {
             (Some(webrtc_fut), false) => {
                 race_transports_prefer_webrtc(
                     webrtc_fut,
                     direct_futures,
                     Self::relay_fallback_delay_ms(),
-                    |r| r.3,
+                    |r| is_preferred_direct_transport(r.3, r.2),
                 )
                 .await
             }
@@ -1635,8 +1678,14 @@ impl Client {
                 let _ = guard.into_inner();
             }
         }
+        let webrtc_protocol = if typ == "WebRTC" {
+            conn.webrtc_transport_protocol().await
+        } else {
+            None
+        };
+        let reported_typ = report_transport_type(typ, direct, webrtc_protocol);
         log::debug!("{} punch secure_connection ok", punch_type);
-        Ok((conn, direct, pk, kcp, typ))
+        Ok((conn, direct, pk, kcp, reported_typ))
     }
 
     /// Establish secure connection with the server.
@@ -2883,7 +2932,7 @@ pub struct LoginConfigHandler {
     // nothing about ICE, so every WebRTC decision keys off this: policy means Relay-only ICE,
     // transport may still go direct.
     pub policy_relay: bool,
-    // The peer-scoped part of it, and the only part that may be written back to the peer.
+    // Relay requested when opening the session, separate from temporary retries.
     pub peer_relay: bool,
     pub direct: Option<bool>,
     pub received: bool,
@@ -3030,6 +3079,20 @@ impl LoginConfigHandler {
         let is_terminal_admin = conn_type == ConnType::TERMINAL
             && std::env::var("IS_TERMINAL_ADMIN").map_or(false, |v| v == "Y");
         self.is_terminal_admin = is_terminal_admin;
+    }
+
+    pub fn prepare_reconnect(&mut self, force_relay: bool) {
+        self.policy_relay = self.peer_relay || force_relay || Config::is_proxy();
+        self.force_relay = self.policy_relay || use_ws();
+        self.peer_info = None;
+        log::info!(
+            "Reconnect relay policy: peer={}, requested={}, proxy={}, websocket={}, forced={}",
+            self.peer_relay,
+            force_relay,
+            Config::is_proxy(),
+            use_ws(),
+            self.force_relay,
+        );
     }
 
     #[cfg(feature = "flutter")]
@@ -3720,13 +3783,6 @@ impl LoginConfigHandler {
                     .options
                     .insert("other-server-key".to_owned(), c.clone());
             }
-        }
-        // peer_relay only — see `initialize`: neither the proxy nor the WebSocket transport is a
-        // fact about this peer, and writing one here makes it permanent.
-        if self.peer_relay {
-            config
-                .options
-                .insert("force-always-relay".to_owned(), "Y".to_owned());
         }
         #[cfg(feature = "flutter")]
         {
@@ -5202,6 +5258,46 @@ mod retry_tests {
 }
 
 #[cfg(test)]
+mod relay_policy_tests {
+    use super::*;
+
+    #[test]
+    fn temporary_relay_retry_does_not_pin_normal_reconnects() {
+        let mut lc = LoginConfigHandler::default();
+        lc.prepare_reconnect(true);
+        assert!(lc.force_relay);
+        assert!(!lc.peer_relay);
+        lc.prepare_reconnect(false);
+        assert_eq!(lc.policy_relay, Config::is_proxy());
+        assert_eq!(lc.force_relay, Config::is_proxy() || use_ws());
+    }
+
+    #[test]
+    fn explicit_peer_relay_preference_survives_normal_reconnects() {
+        let mut lc = LoginConfigHandler::default();
+        lc.peer_relay = true;
+        lc.prepare_reconnect(false);
+        assert!(lc.policy_relay);
+        assert!(lc.force_relay);
+    }
+
+    #[test]
+    fn session_relay_does_not_enable_saved_always_relay() {
+        let id = format!("rdpx-relay-test-{}", Uuid::new_v4());
+        let mut lc = LoginConfigHandler::default();
+        lc.id = id.clone();
+        lc.peer_relay = true;
+        lc.handle_peer_info(&PeerInfo::default());
+        let saved = PeerConfig::load(&id);
+        PeerConfig::remove(&id);
+        assert!(!config::option2bool(
+            "force-always-relay",
+            saved.options.get("force-always-relay").map(String::as_str).unwrap_or_default(),
+        ));
+    }
+}
+
+#[cfg(test)]
 mod port_forward_mux_tests {
     use super::*;
 
@@ -5566,8 +5662,27 @@ async fn udp_nat_connect(
 }
 
 #[cfg(test)]
+mod transport_label_tests {
+    use super::report_transport_type;
+
+    #[test]
+    fn web_rtc_is_reported_as_network_path_or_relay() {
+        assert_eq!(report_transport_type("WebRTC", true, Some("UDP")), "UDP");
+        assert_eq!(report_transport_type("WebRTC", true, Some("TCP")), "TCP");
+        assert_eq!(report_transport_type("WebRTC", false, Some("UDP")), "Relay");
+        assert_eq!(report_transport_type("WebRTC", true, None), "WebRTC");
+        assert_eq!(report_transport_type("WebRTC", false, None), "Relay");
+        assert_eq!(report_transport_type("UDP", true, None), "UDP");
+    }
+}
+
+#[cfg(test)]
 mod webrtc_race_tests {
-    use super::{race_transports_prefer_webrtc, request_allows_tcp_punch};
+    use super::{
+        force_relay_without_punch_transport, is_preferred_direct_transport,
+        punch_request_for_attempt, race_transports_prefer_webrtc, request_allows_tcp_punch,
+        tcp_punch_allowed_for_connection,
+    };
     use hbb_common::{
         anyhow::anyhow,
         futures::future::{BoxFuture, FutureExt},
@@ -5595,9 +5710,67 @@ mod webrtc_race_tests {
     const NOT_P2P: fn(&&'static str) -> bool = |_| false;
 
     #[test]
+    fn unanswered_punch_requests_fall_back_to_relay() {
+        use hbb_common::rendezvous_proto::PunchHoleRequest;
+
+        let request = PunchHoleRequest {
+            id: "115268672".into(),
+            webrtc_sdp_offer: "webrtc://offer".into(),
+            ..Default::default()
+        };
+        for (attempt, relay) in [(1, false), (2, false), (3, true)] {
+            let actual = punch_request_for_attempt(&request, attempt);
+            assert_eq!(actual.force_relay, relay);
+            assert_eq!(actual.id, request.id);
+            assert_eq!(actual.webrtc_sdp_offer, request.webrtc_sdp_offer);
+        }
+    }
+
+    #[test]
     fn webrtc_request_never_reuses_its_signaling_socket_for_tcp_punch() {
         assert!(request_allows_tcp_punch(""));
         assert!(!request_allows_tcp_punch("webrtc://offer"));
+    }
+
+    #[tokio::test]
+    async fn udp_preferred_over_faster_tcp_within_window() {
+        let got = race_transports_prefer_webrtc(
+            ok_after(120, "UDP"),
+            vec![ok_after(10, "TCP")],
+            500,
+            |result| is_preferred_direct_transport(true, result),
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, "UDP");
+    }
+
+    #[tokio::test]
+    async fn failed_udp_keeps_tcp_fallback() {
+        let got = race_transports_prefer_webrtc(
+            err_after(120, "UDP blocked"),
+            vec![ok_after(10, "TCP")],
+            500,
+            |result| is_preferred_direct_transport(true, result),
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, "TCP");
+    }
+
+    #[test]
+    fn udp_transport_disables_tcp_punch_for_the_same_round() {
+        assert!(!tcp_punch_allowed_for_connection(true, true, ""));
+        assert!(tcp_punch_allowed_for_connection(true, false, ""));
+        assert!(!tcp_punch_allowed_for_connection(true, false, "webrtc://offer"));
+    }
+
+    #[test]
+    fn disabled_tcp_punch_requests_relay_when_udp_mapping_is_unavailable() {
+        assert!(force_relay_without_punch_transport(false, false, 0, false, false));
+        assert!(!force_relay_without_punch_transport(false, false, 21116, false, false));
+        assert!(!force_relay_without_punch_transport(false, false, 0, true, false));
+        assert!(!force_relay_without_punch_transport(false, false, 0, false, true));
     }
 
     // A direct result must win even when it lands first — the LAN ordering, where ICE beats the

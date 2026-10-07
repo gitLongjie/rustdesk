@@ -4192,6 +4192,18 @@ String get appName {
   return _appName;
 }
 
+String normalizeConnectionTransport(bool direct, String streamType) {
+  if (streamType == 'IPv6' || (streamType == 'WebRTC' && direct)) {
+    return 'UDP';
+  }
+  if (streamType == 'Relay' ||
+      streamType == 'WebSocket' ||
+      streamType == 'WebRTC') {
+    return 'Relay';
+  }
+  return streamType;
+}
+
 String getConnectionText(bool secure, bool direct, String streamType) {
   String connectionText;
   if (secure && direct) {
@@ -4203,9 +4215,7 @@ String getConnectionText(bool secure, bool direct, String streamType) {
   } else {
     connectionText = translate("Relayed and unencrypted connection");
   }
-  if (streamType == 'Relay') {
-    streamType = 'TCP';
-  }
+  streamType = normalizeConnectionTransport(direct, streamType);
   if (streamType.isEmpty) {
     return connectionText;
   } else {

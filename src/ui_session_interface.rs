@@ -1306,17 +1306,7 @@ impl<T: InvokeUiSession> Session<T> {
 
         let cloned = self.clone();
 
-        // override only if true
-        if true == force_relay {
-            let mut lc = self.lc.write().unwrap();
-            lc.force_relay = true;
-            // An explicit retry-via-relay is a decision about this peer, not transport
-            // necessity: Relay-only ICE for this round like any force-always-relay session,
-            // and it is the one kind of relay that belongs in the peer's saved config.
-            lc.policy_relay = true;
-            lc.peer_relay = true;
-        }
-        self.lc.write().unwrap().peer_info = None;
+        self.lc.write().unwrap().prepare_reconnect(force_relay);
         self.reconnect_count.fetch_add(1, Ordering::SeqCst);
         let mut lock = self.thread.lock().unwrap();
         // No need to join the previous thread, because it will exit automatically.

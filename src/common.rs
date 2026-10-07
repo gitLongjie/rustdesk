@@ -1205,15 +1205,8 @@ pub fn get_webrtc_enabled() -> bool {
 
 pub fn get_local_option(key: &str) -> String {
     let v = LocalConfig::get_option(key);
-    if key == keys::OPTION_ENABLE_UDP_PUNCH
-        || key == keys::OPTION_ENABLE_IPV6_PUNCH
-        || key == keys::OPTION_ENABLE_WEBRTC
-    {
-        if v.is_empty() {
-            if !is_public(&Config::get_rendezvous_server()) {
-                return "N".to_owned();
-            }
-        }
+    if key == keys::OPTION_ENABLE_TCP_PUNCH && v.is_empty() {
+        return "N".to_owned();
     }
     if key == "lang" && (v == "pt" || v == "br") {
         return "pt-br".to_owned();

@@ -3902,16 +3902,22 @@ class QualityMonitorModel with ChangeNotifier {
   bool get show => _show;
   QualityMonitorData get data => _data;
 
-  // Only a WebRTC session on the web names its transport here: web has no
-  // session tab to show it on (the desktop tab's tooltip already does), and
-  // WebRTC is the one path that can be direct or TURN.
-  String? get webrtcTransport {
-    if (!isWeb) return null;
+  String? get transport {
     final ffiModel = parent.target?.ffiModel;
-    if (ffiModel == null) return null;
-    final streamType = ffiModel.cachedPeerData.streamType;
-    if (!streamType.startsWith('WebRTC')) return null;
-    return ffiModel.direct == false ? '$streamType (TURN)' : streamType;
+    final value = ffiModel?.cachedPeerData.streamType;
+    if (value == null || value.isEmpty) return null;
+    return normalizeConnectionTransport(ffiModel?.direct == true, value);
+  }
+
+  String? get connectionType => switch (parent.target?.ffiModel.direct) {
+        true => 'P2P',
+        false => 'Relay Connection',
+        null => null,
+      };
+
+  // The web has no session tab to show the transport on.
+  String? get webrtcTransport {
+    return isWeb ? transport : null;
   }
 
   checkShowQualityMonitor(SessionID sessionId) async {
