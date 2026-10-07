@@ -394,6 +394,14 @@ fn report_transport_type(
     }
 }
 
+fn fallback_relay_server(rendezvous_server: &str, configured_relay_server: &str) -> String {
+    if configured_relay_server.is_empty() {
+        crate::increase_port(rendezvous_server, 1)
+    } else {
+        configured_relay_server.to_owned()
+    }
+}
+
 /// TCP punch is a user option like the other direct transports, but it is also the backstop:
 /// with every direct transport switched off there would be nothing left to punch with, so it
 /// runs regardless. Only the switches decide that — a transport that is enabled but fails to
@@ -1392,7 +1400,33 @@ impl Client {
             if let Some(stop) = webrtc_bridge_stop.take() {
                 let _ = stop.send(());
             }
-            bail!("Failed to connect via rendezvous server");
+            let relay_server = if relay_server.is_empty() {
+                fallback_relay_server(&rendezvous_server, &Config::get_option("relay-server"))
+            } else {
+                relay_server
+            };
+            log::warn!(
+                "punch attempts exhausted without a response; requesting relay via {}",
+                relay_server
+            );
+            let mut conn = Self::request_relay(
+                &peer,
+                relay_server,
+                &rendezvous_server,
+                false,
+                &key,
+                &token,
+                conn_type,
+                &interface.get_switch_code(),
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to connect via rendezvous server: {}", e))?;
+            let pk = Self::secure_connection(&peer, signed_id_pk, &key, &mut conn).await?;
+            return Ok((
+                (conn, false, pk, None, "Relay"),
+                (feedback, rendezvous_server),
+                true,
+            ));
         }
         let time_used = start.elapsed().as_millis() as u64;
         log::info!(
@@ -5692,7 +5726,7 @@ mod transport_label_tests {
 #[cfg(test)]
 mod webrtc_race_tests {
     use super::{
-        force_relay_without_punch_transport, is_preferred_direct_transport,
+        fallback_relay_server, force_relay_without_punch_transport, is_preferred_direct_transport,
         punch_request_for_attempt, race_transports_prefer_webrtc, request_allows_tcp_punch,
         tcp_punch_allowed_for_connection,
     };
@@ -5737,6 +5771,18 @@ mod webrtc_race_tests {
             assert_eq!(actual.id, request.id);
             assert_eq!(actual.webrtc_sdp_offer, request.webrtc_sdp_offer);
         }
+    }
+
+    #[test]
+    fn missing_punch_response_uses_configured_or_default_relay() {
+        assert_eq!(
+            fallback_relay_server("hbbs.example:21116", ""),
+            "hbbs.example:21117"
+        );
+        assert_eq!(
+            fallback_relay_server("hbbs.example:21116", "relay.example:31117"),
+            "relay.example:31117"
+        );
     }
 
     #[test]
