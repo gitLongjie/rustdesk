@@ -607,6 +607,33 @@ pub fn get_current_session_id(share_rdp: bool) -> DWORD {
     unsafe { get_current_session(if share_rdp { TRUE } else { FALSE }) }
 }
 
+fn select_service_session_id(preferred: DWORD, sessions: &[(DWORD, bool)]) -> DWORD {
+    if preferred != u32::MAX
+        && sessions
+            .iter()
+            .any(|(session_id, has_user)| *session_id == preferred && *has_user)
+    {
+        return preferred;
+    }
+    sessions
+        .iter()
+        .find(|(session_id, has_user)| *has_user && *session_id != 0 && *session_id != u32::MAX)
+        .map(|(session_id, _)| *session_id)
+        .unwrap_or(preferred)
+}
+
+fn service_session_id() -> DWORD {
+    let preferred = unsafe { get_current_session(share_rdp()) };
+    let sessions: Vec<_> = get_available_sessions(false)
+        .into_iter()
+        .map(|session| {
+            let has_user = !get_session_username(session.sid).is_empty();
+            (session.sid, has_user)
+        })
+        .collect();
+    select_service_session_id(preferred, &sessions)
+}
+
 #[inline]
 fn resolve_expected_active_session_id_for_service(session_id: u32) -> Option<u32> {
     let share_rdp_enabled = is_share_rdp();
@@ -616,8 +643,11 @@ fn resolve_expected_active_session_id_for_service(session_id: u32) -> Option<u32
     {
         return Some(session_id);
     }
-    let current_active_session =
-        unsafe { get_current_session(if share_rdp_enabled { TRUE } else { FALSE }) };
+    let current_active_session = if share_rdp_enabled {
+        service_session_id()
+    } else {
+        unsafe { get_current_session(FALSE) }
+    };
     if current_active_session == u32::MAX {
         None
     } else {
@@ -697,7 +727,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     // Tell the system that the service is running now
     status_handle.set_service_status(next_status)?;
 
-    let mut session_id = unsafe { get_current_session(share_rdp()) };
+    let mut session_id = service_session_id();
     log::info!("session id {}", session_id);
     let mut h_process = launch_server(session_id, true).await.unwrap_or(NULL);
     let mut incoming = ipc::new_listener(crate::POSTFIX_SERVICE).await?;
@@ -708,7 +738,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
             .map(|e| e.sid)
             .collect();
         if !sids.contains(&session_id) || !is_share_rdp() {
-            let current_active_session = unsafe { get_current_session(share_rdp()) };
+            let current_active_session = service_session_id();
             if session_id != current_active_session {
                 session_id = current_active_session;
                 // https://github.com/rustdesk/rustdesk/discussions/10039
@@ -765,7 +795,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
             Err(_) => {
                 // timeout
                 unsafe {
-                    let tmp = get_current_session(share_rdp());
+                    let tmp = service_session_id();
                     if tmp == 0xFFFFFFFF {
                         continue;
                     }
@@ -4777,6 +4807,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn service_session_falls_back_to_logged_in_session_when_console_has_no_user() {
+        assert_eq!(select_service_session_id(2, &[(2, false), (3, true)]), 3);
+    }
+
+    #[test]
+    fn service_session_keeps_preferred_session_with_user() {
+        assert_eq!(select_service_session_id(3, &[(2, true), (3, true)]), 3);
+    }
+
+    #[test]
+    fn service_session_keeps_preferred_session_without_fallback() {
+        assert_eq!(select_service_session_id(2, &[(2, false)]), 2);
     }
 
     #[test]

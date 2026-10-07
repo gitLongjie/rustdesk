@@ -515,9 +515,12 @@ impl Client {
             crate::get_rendezvous_server(1_000).await
         } else {
             if other_server == PUBLIC_SERVER {
+                let Some((server, servers)) = RENDEZVOUS_SERVERS.split_first() else {
+                    bail!("No rendezvous server configured");
+                };
                 (
-                    check_port(RENDEZVOUS_SERVERS[0], RENDEZVOUS_PORT),
-                    RENDEZVOUS_SERVERS[1..]
+                    check_port(server, RENDEZVOUS_PORT),
+                    servers
                         .iter()
                         .map(|x| x.to_string())
                         .collect(),
@@ -527,6 +530,10 @@ impl Client {
                 (check_port(other_server, RENDEZVOUS_PORT), Vec::new(), true)
             }
         };
+
+        if rendezvous_server.is_empty() || crate::common::is_public(&rendezvous_server) {
+            bail!("No self-hosted rendezvous server configured");
+        }
 
         // Same relay gate as the v6 socket below: under any forced relay the v6 punch cannot
         // be used, so probing v6 reachability is wasted work on every such connection.
@@ -3046,14 +3053,19 @@ impl LoginConfigHandler {
         self.session_id = sid;
         self.supported_encoding = Default::default();
         self.clear_restarting_remote_device();
-        // Three scopes: what was decided about this PEER, what this CLIENT is set up as (proxy),
-        // and what its TRANSPORT forces (ws). Only the first may be written back to the peer's
-        // config — persisting the others would make a local setup a permanent peer property.
         self.peer_relay =
             config::option2bool("force-always-relay", &self.get_option("force-always-relay"))
                 || force_relay;
         self.policy_relay = self.peer_relay || Config::is_proxy();
         self.force_relay = self.policy_relay || use_ws();
+        log::info!(
+            "Connection relay policy: saved={}, requested={}, proxy={}, websocket={}, forced={}",
+            config::option2bool("force-always-relay", &self.get_option("force-always-relay")),
+            force_relay,
+            Config::is_proxy(),
+            use_ws(),
+            self.force_relay,
+        );
         if let Some((real_id, server, key)) = &self.other_server {
             let other_server_key = self.get_option("other-server-key");
             if !other_server_key.is_empty() && key.is_empty() {
@@ -5364,7 +5376,7 @@ async fn hc_connection_(
                 last_recv_msg = Instant::now();
                 let bytes = res.ok_or_else(|| anyhow!("Rendezvous connection is reset by the peer"))??;
                 if bytes.is_empty() {
-                    conn.send_bytes(bytes::Bytes::new()).await?;
+                    conn.send_raw(Vec::new()).await?;
                     continue; // heartbeat
                 }
                 let msg = RendezvousMessage::parse_from_bytes(&bytes)?;
@@ -5563,7 +5575,7 @@ async fn test_udp_uat(
     let mut packets_sent = 0;
 
     // Send initial burst to improve reliability
-    let data = msg_out.write_to_bytes()?;
+    let data = hbb_common::private_protocol::encode(&msg_out.write_to_bytes()?);
     for _ in 0..2 {
         if let Err(e) = udp_socket.send_to(&data, server_addr).await {
             log::warn!("Failed to send initial UDP NAT test packet: {}", e);
@@ -5603,7 +5615,8 @@ async fn test_udp_uat(
             res = udp_socket.recv(&mut buf[..]) => {
                 match res {
                     Ok(n) => {
-                        match RendezvousMessage::parse_from_bytes(&buf[0..n]) {
+                        match hbb_common::private_protocol::decode(bytes::BytesMut::from(&buf[0..n])).map_err(hbb_common::anyhow::Error::from)
+                            .and_then(|bytes| RendezvousMessage::parse_from_bytes(&bytes).map_err(Into::into)) {
                             Ok(msg_in) => {
                                 if let Some(rendezvous_message::Union::TestNatResponse(response)) = msg_in.union {
                                     *udp_port.lock().unwrap() = response.port as u16;
@@ -5611,7 +5624,7 @@ async fn test_udp_uat(
                                 }
                             }
                             Err(e) => {
-                                log::warn!("Failed to parse UDP NAT test response: {}", e);
+                                log::trace!("Failed to parse UDP NAT test response: {}", e);
                             }
                         }
                     }

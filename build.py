@@ -966,6 +966,27 @@ def build_flutter_arch_manjaro(version, features):
     system2('HBB=`pwd`/.. FLUTTER=1 makepkg -f')
 
 
+def windows_sign(path):
+    # CAs have issued OV/EV code-signing certs onto hardware tokens or cloud
+    # KSPs only since 2023 (no exportable PFX), so two modes are needed:
+    # WINDOWS_SIGN_THUMBPRINT selects the cert from the token store, while
+    # P + cert.pfx keeps the legacy PFX flow for older certs.
+    thumbprint = os.environ.get('WINDOWS_SIGN_THUMBPRINT')
+    if thumbprint:
+        system2(
+            'signtool sign /fd sha256 /sha1 '
+            f'{thumbprint} /tr http://timestamp.digicert.com /td sha256 {path}')
+        return
+    pa = os.environ.get('P')
+    if pa:
+        # https://certera.com/kb/tutorial-guide-for-safenet-authentication-client-for-code-signing/
+        system2(
+            f'signtool sign /a /v /p {pa} /debug /f .\\cert.pfx /t http://timestamp.digicert.com  '
+            f'{path}')
+        return
+    print(f'Not signed: {path}')
+
+
 def build_flutter_windows(version, features, skip_portable_pack):
     if not skip_cargo:
         system2(f'cargo build --locked --features {features} --lib --release')
@@ -977,6 +998,11 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
                  flutter_build_dir_2)
+    windows_sign(f'{flutter_build_dir_2}rustdesk.exe')
+    if os.path.exists(f'{flutter_build_dir_2}librustdesk.dll'):
+        windows_sign(f'{flutter_build_dir_2}librustdesk.dll')
+    else:
+        print(f'librustdesk.dll not found in {flutter_build_dir_2}, skip signing it')
     if skip_portable_pack:
         return
     os.chdir('libs/portable')
@@ -995,6 +1021,7 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.rename('./rustdesk_portable.exe', f'./rustdesk-{version}-install.exe')
     print(
         f'output location: {os.path.abspath(os.curdir)}/rustdesk-{version}-install.exe')
+    windows_sign(f'./rustdesk-{version}-install.exe')
 
 
 def main():
@@ -1046,14 +1073,7 @@ def main():
         system2('cargo build --locked --release --features ' + features)
         # system2('upx.exe target/release/rustdesk.exe')
         system2('mv target/release/rustdesk.exe target/release/RustDesk.exe')
-        pa = os.environ.get('P')
-        if pa:
-            # https://certera.com/kb/tutorial-guide-for-safenet-authentication-client-for-code-signing/
-            system2(
-                f'signtool sign /a /v /p {pa} /debug /f .\\cert.pfx /t http://timestamp.digicert.com  '
-                'target\\release\\rustdesk.exe')
-        else:
-            print('Not signed')
+        windows_sign('target\\release\\RustDesk.exe')
         os.makedirs(res_dir, exist_ok=True)
         system2(
             f'cp -rf target/release/RustDesk.exe {res_dir}')

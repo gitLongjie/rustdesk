@@ -1027,12 +1027,14 @@ pub fn check_software_update() {
     }
 }
 
-// No need to check `danger_accept_invalid_cert` for now.
-// Because the url is always `https://api.rustdesk.com/version/latest`.
+// The endpoint is opt-in through RUSTDESK_VERSION_SERVER.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
+    if url.is_empty() {
+        return Ok(());
+    }
     let proxy_conf = Config::get_socks();
     let tls_url = get_url_for_tls(&url, &proxy_conf);
     let tls_type = get_cached_tls_type(tls_url);
@@ -1059,6 +1061,7 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
     let bytes = latest_release_response.bytes().await?;
     let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
     let response_url = resp.url;
+    if is_public(&response_url) { return Ok(()); }
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
 
     if get_version_number(&latest_release_version) > get_version_number(crate::VERSION) {
@@ -1128,6 +1131,9 @@ pub fn get_api_server(api: String, custom: String) -> String {
         return "".to_owned();
     }
     let mut res = get_api_server_(api, custom);
+    if is_public(&res) {
+        return String::new();
+    }
     if res.ends_with('/') {
         res.pop();
     }
@@ -1164,15 +1170,7 @@ fn get_api_server_(api: String, custom: String) -> String {
 
 #[inline]
 pub fn is_public(url: &str) -> bool {
-    let parsed = url::Url::parse(url)
-        .ok()
-        .filter(|parsed| parsed.has_host())
-        .or_else(|| url::Url::parse(&format!("http://{url}")).ok());
-    let Some(host) = parsed.as_ref().and_then(url::Url::host_str) else {
-        return false;
-    };
-    let host = host.strip_suffix('.').unwrap_or(host);
-    host == "rustdesk.com" || host.ends_with(".rustdesk.com")
+    hbb_common::is_official_host(url)
 }
 
 pub fn get_tcp_punch_enabled() -> bool {
@@ -1524,6 +1522,7 @@ where
 /// - 4xx responses are returned as-is (server is reachable, business logic error).
 /// - If fallback also fails, returns the original HTTP result (text or error).
 pub async fn post_request(url: String, body: String, header: &str) -> ResultType<String> {
+    if is_public(&url) { bail!("The official API is disabled"); }
     with_tcp_proxy_fallback(
         &url,
         "POST",
@@ -1558,6 +1557,7 @@ pub async fn post_request_with_status(
     body: String,
     header: &str,
 ) -> ResultType<(u16, String)> {
+    if is_public(&url) { bail!("The official API is disabled"); }
     if should_use_raw_tcp_for_api(&url) {
         return post_request_via_tcp_proxy_status(&url, &body, header).await;
     }
@@ -1849,6 +1849,7 @@ pub async fn http_request_sync(
     body: Option<String>,
     header: String,
 ) -> ResultType<String> {
+    if is_public(&url) { bail!("The official API is disabled"); }
     with_tcp_proxy_fallback(
         &url,
         &method,

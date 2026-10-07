@@ -1,5 +1,7 @@
 /build
 /target
+/dist
+.mimosa
 .vscode
 .idea
 .DS_Store

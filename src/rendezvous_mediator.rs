@@ -629,7 +629,7 @@ impl RendezvousMediator {
                     if bytes.is_empty() {
                         // After fixing frequent register_pk, for websocket, nginx need to set proxy_read_timeout to more than 60 seconds, eg: 120s
                         // https://serverfault.com/questions/1060525/why-is-my-websocket-connection-gets-closed-in-60-seconds
-                        conn.send_bytes(bytes::Bytes::new()).await?;
+                        conn.send_raw(Vec::new()).await?;
                         continue; // heartbeat
                     }
                     let msg = Message::parse_from_bytes(&bytes)?;
@@ -1217,7 +1217,7 @@ impl RendezvousMediator {
         let mut msg_out = Message::new();
         msg_out.set_punch_hole_sent(msg_punch);
         let (socket, addr) = new_direct_udp_for(&self.host).await?;
-        let data = msg_out.write_to_bytes()?;
+        let data = hbb_common::private_protocol::encode(&msg_out.write_to_bytes()?);
         socket.send_to(&data, addr).await?;
         // The reply is out, and with it the answer and the v6 address: declined is the listen
         // alone, and the socket goes at once - a declined request is not worth one kept for its
@@ -1494,7 +1494,16 @@ async fn udp_nat_listen(
         // The KCP session is up: from here it is a connection like any other and the connection
         // layer's own limits apply to it, so the place goes back for the next punch.
         drop(slot);
-        crate::server::create_tcp_connection(server, stream.1, peer_addr_v4, true, meta).await?;
+        let (kcp, stream) = stream;
+        crate::server::create_kcp_connection(
+            server,
+            kcp,
+            stream,
+            peer_addr_v4,
+            true,
+            meta,
+        )
+        .await?;
         Ok(())
     };
     func.await.map_err(|e: anyhow::Error| {
@@ -1821,7 +1830,8 @@ mod tests {
             .await
             .expect("the reply must reach hbbs")
             .unwrap();
-        let sent = RendezvousMessage::parse_from_bytes(&buf[..n]).unwrap();
+        let bytes = hbb_common::private_protocol::decode(bytes::BytesMut::from(&buf[..n])).unwrap();
+        let sent = RendezvousMessage::parse_from_bytes(&bytes).unwrap();
         let sent = sent.punch_hole_sent();
         assert_eq!(sent.webrtc_sdp_answer, "answer");
         assert_eq!(&sent.socket_addr_v6[..], b"v6");

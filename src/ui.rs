@@ -592,6 +592,7 @@ impl UI {
     }
 
     fn open_url(&self, url: String) {
+        if crate::common::is_public(&url) { return; }
         #[cfg(windows)]
         let p = "explorer";
         #[cfg(target_os = "macos")]

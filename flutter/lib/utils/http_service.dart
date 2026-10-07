@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/utils/url_launcher.dart' show isOfficialUrl;
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -8,6 +9,44 @@ export 'package:http/http.dart' show Response;
 
 enum HttpMethod { get, post, put, delete }
 
+class _SelfHostedClient extends http.BaseClient {
+  final _client = http.Client();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    for (var redirects = 0; ; redirects++) {
+      if (isOfficialUrl(request.url)) {
+        throw ArgumentError('The official API is disabled');
+      }
+      request.followRedirects = false;
+      final response = await _client.send(request);
+      final location = response.headers['location'];
+      if (location == null ||
+          ![301, 302, 303, 307, 308].contains(response.statusCode)) {
+        return response;
+      }
+      await response.stream.drain<void>();
+      if (redirects >= 9) throw StateError('Too many redirects');
+      final target = request.url.resolve(location);
+      final useGet = response.statusCode == 303 ||
+          ([301, 302].contains(response.statusCode) && request.method == 'POST');
+      final next = http.Request(useGet ? 'GET' : request.method, target);
+      next.headers.addAll(request.headers);
+      if (target.origin != request.url.origin) {
+        next.headers.removeWhere((name, _) =>
+            ['authorization', 'cookie'].contains(name.toLowerCase()));
+      }
+      if (!useGet && request is http.Request) {
+        next.bodyBytes = request.bodyBytes;
+      }
+      request = next;
+    }
+  }
+
+  @override
+  void close() => _client.close();
+}
+
 class HttpService {
   Future<http.Response> sendRequest(
     Uri url,
@@ -15,6 +54,9 @@ class HttpService {
     Map<String, String>? headers,
     dynamic body,
   }) async {
+    if (isOfficialUrl(url)) {
+      throw ArgumentError('The official API is disabled');
+    }
     headers ??= {'Content-Type': 'application/json'};
 
     // Use Rust HTTP implementation for non-web platforms for consistency.
@@ -57,7 +99,7 @@ class HttpService {
     Map<String, String>? headers,
     dynamic body,
   }) async {
-    final client = http.Client();
+    final client = _SelfHostedClient();
     try {
       var response = http.Response('', 400);
 

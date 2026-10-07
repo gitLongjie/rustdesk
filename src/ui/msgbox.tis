@@ -200,7 +200,7 @@ class MsgboxComponent: Reactor.Component {
 
     event click $(button#jumplink) {
         if (this.link.indexOf("http") == 0) {
-            Sciter.launch(this.link);
+            if (!/^https?:\/\/([^\/@]*@)?([^\/:?#]*\.)?rustdesk\.com\.?([:\/?#]|$)/i.test(this.link)) Sciter.launch(this.link);
         }
     }
     

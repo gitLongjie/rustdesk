@@ -257,6 +257,18 @@ pub async fn create_tcp_connection(
     Ok(())
 }
 
+pub async fn create_kcp_connection(
+    server: ServerPtr,
+    _kcp: crate::kcp_stream::KcpStream,
+    stream: Stream,
+    addr: SocketAddr,
+    secure: bool,
+    meta: ConnectionMeta,
+) -> ResultType<()> {
+    // KcpStream owns the UDP I/O task; keep it alive for the whole connection.
+    create_tcp_connection(server, stream, addr, secure, meta).await
+}
+
 /// Our signed identity goes out and, when `secure`, the controller's reply keys `stream`.
 /// Separate so it can be raced against the connection's eviction.
 async fn identity_handshake(stream: &mut Stream, secure: bool) -> ResultType<()> {
