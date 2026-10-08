@@ -5728,7 +5728,7 @@ mod webrtc_race_tests {
     use super::{
         fallback_relay_server, force_relay_without_punch_transport, is_preferred_direct_transport,
         punch_request_for_attempt, race_transports_prefer_webrtc, request_allows_tcp_punch,
-        tcp_punch_allowed_for_connection,
+        resolve_relay_server, tcp_punch_allowed_for_connection,
     };
     use hbb_common::{
         anyhow::anyhow,
@@ -5781,6 +5781,18 @@ mod webrtc_race_tests {
         );
         assert_eq!(
             fallback_relay_server("hbbs.example:21116", "relay.example:31117"),
+            "relay.example:31117"
+        );
+    }
+
+    #[test]
+    fn empty_punch_response_relay_is_resolved_before_direct_connect() {
+        assert_eq!(
+            resolve_relay_server("".to_owned(), "hbbs.example:21116", ""),
+            "hbbs.example:21117"
+        );
+        assert_eq!(
+            resolve_relay_server("relay.example:31117".to_owned(), "hbbs.example:21116", ""),
             "relay.example:31117"
         );
     }
