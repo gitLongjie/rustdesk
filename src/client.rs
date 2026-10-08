@@ -402,6 +402,18 @@ fn fallback_relay_server(rendezvous_server: &str, configured_relay_server: &str)
     }
 }
 
+fn resolve_relay_server(
+    relay_server: String,
+    rendezvous_server: &str,
+    configured_relay_server: &str,
+) -> String {
+    if relay_server.is_empty() {
+        fallback_relay_server(rendezvous_server, configured_relay_server)
+    } else {
+        relay_server
+    }
+}
+
 /// TCP punch is a user option like the other direct transports, but it is also the backstop:
 /// with every direct transport switched off there would be nothing left to punch with, so it
 /// runs regardless. Only the switches decide that — a transport that is enabled but fails to
@@ -1428,6 +1440,11 @@ impl Client {
                 true,
             ));
         }
+        relay_server = resolve_relay_server(
+            relay_server,
+            &rendezvous_server,
+            &Config::get_option("relay-server"),
+        );
         let time_used = start.elapsed().as_millis() as u64;
         log::info!(
             "{} ms used to {} punch hole, relay_server: {}, {}",
