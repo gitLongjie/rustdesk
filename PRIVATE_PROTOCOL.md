@@ -12,7 +12,7 @@
 ## 最终行为
 
 - 不再提供官方默认 ID 服务器；旧配置中的 `rustdesk.com` 及其子域也会被过滤。未配置自建服务器时，ID 连接明确失败。
-- 保留自建 API 默认地址 `http://remote.brigecode.icu:21114`、自定义 API、账号和 OIDC。官网 API 请求被拒绝，HTTP 重定向也检查官网域名。
+- 保留自建 API 默认地址 `http://82.157.201.157:21114`、自定义 API、账号和 OIDC。`remote.brigecode.icu` 的明文 HTTP GET 会被 DNSPod 未备案拦截页劫持（302 到 webblock），因此内置 API 默认与手填配置都应使用服务器 IP；ID/中继走裸 TCP/UDP，不受该拦截影响。官网 API 请求被拒绝，HTTP 重定向也检查官网域名。
 - 更新检查默认关闭。只有设置自建 `RUSTDESK_VERSION_SERVER` 才发起检查，官方域名被拒绝。未配置时不会为更新检查采集设备指纹。
 - Flutter 与旧 Sciter 的官网跳转被拦截；帮助和版权文字中仍可能显示官网地址。
 - 自建服务器不再默认禁用 UDP、IPv6 和 WebRTC。用户显式禁用仍生效。现有非 RustDesk 的 STUN/TURN 配置保留。

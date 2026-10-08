@@ -1157,7 +1157,6 @@ fn get_api_server_(api: String, custom: String) -> String {
         return api.to_owned();
     }
     let s0 = get_custom_rendezvous_server(custom);
-    // The bundled domain's HTTP API redirects to a DNSPod block page.
     if !s0.is_empty()
         && !matches!(s0.as_str(), "remote.brigecode.icu" | "remote.brigecode.icu:21116")
     {
@@ -1168,7 +1167,7 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "http://82.157.201.157:21114".to_owned()
+    "https://remote.brigecode.icu".to_owned()
 }
 
 #[inline]
@@ -3149,11 +3148,19 @@ mod tests {
     }
 
     #[test]
-    fn test_bundled_api_server_avoids_domain_block_page() {
-        for custom in ["", "remote.brigecode.icu", "remote.brigecode.icu:21116"] {
+    fn test_bundled_api_server_without_custom_config() {
+        // The bundled fallback must be the server IP: plain HTTP GETs on the
+        // unregistered domain are hijacked to the DNSPod webblock page.
+        assert_eq!(
+            get_api_server_(String::new(), String::new()),
+            "http://82.157.201.157:21114"
+        );
+        // A manually entered rendezvous server still derives its API host
+        // from what the user typed.
+        for custom in ["remote.brigecode.icu", "remote.brigecode.icu:21116"] {
             assert_eq!(
                 get_api_server_(String::new(), custom.to_owned()),
-                "http://82.157.201.157:21114"
+                "https://remote.brigecode.icu"
             );
         }
     }
