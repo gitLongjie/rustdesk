@@ -7,13 +7,14 @@
 - 客户端已有官方稳定版 `1.5.0` 基线：`fada664df7a294d1d1a9ca3e7cd3637069122f17`。
 - 服务端已从官方拉取正式 release `1.1.16`：`73523b31cfd25d77dee862e6fc9f5e1fb5e485ef`。
 - 服务端稳定版合并提交：`6d7cfd8`，位于 `codex/private-protocol`。保留 fork 的 JWT / MUST_LOGIN 功能和发布工作流。
-- 功能修改仍在工作区，两端公共库内的新增文件也需要随最终提交保存。没有推送或部署。
+- 自建域名、API 和 WSS 入口已部署至 SSH 主机 `rustdesk`。客户端版本升级为 `1.5.1+69`，通过 GitHub 标签构建保留上游的平台矩阵和安装包格式。
 
 ## 最终行为
 
 - 不再提供官方默认 ID 服务器；旧配置中的 `rustdesk.com` 及其子域也会被过滤。未配置自建服务器时，ID 连接明确失败。
-- 保留自建 API 默认地址 `http://82.157.201.157:21114`、自定义 API、账号和 OIDC。`remote.brigecode.icu` 的明文 HTTP GET 会被 DNSPod 未备案拦截页劫持（302 到 webblock），因此内置 API 默认与手填配置都应使用服务器 IP；ID/中继走裸 TCP/UDP，不受该拦截影响。官网 API 请求被拒绝，HTTP 重定向也检查官网域名。
-- 更新检查默认关闭。只有设置自建 `RUSTDESK_VERSION_SERVER` 才发起检查，官方域名被拒绝。未配置时不会为更新检查采集设备指纹。
+- 自建 API 默认地址为 `https://srs.rtc.testtool.online/rustdesk`，保留自定义 API、账号和 OIDC。线上通过独立的 `/rustdesk/` 路径反向代理到本机 `21114`，公网证书校验通过；登录选项 GET 返回 200 JSON，空登录请求 POST 返回预期的 400 JSON 校验错误。ID 服务统一使用 `srs.rtc.testtool.online:21116`，中继使用 `srs.rtc.testtool.online:21117`，内置公钥与线上服务器一致。旧的 `remote.brigecode.icu` 登录 API 被拦截，不再作为默认 API；手填新旧内置 ID 域名时均使用上述 HTTPS API。客户端需重新构建后才能内置新地址，真实账号登录和安卓远控仍需新版实测。官网 API 请求被拒绝，HTTP 重定向也检查官网域名。
+- WebSocket 统一通过 443 的 `wss://srs.rtc.testtool.online/ws/id` 和 `/ws/relay`，分别反向代理到本机 `21118`、`21119`。启用 WebSocket 时，内置域名即使 API 设置留空也使用 WSS。公网已验证可信证书、101 升级、RDPX v2 ID 请求响应、WSS 中继双向传输及 TCP/WSS 混合中继传输；这些入口无需新增公网端口。
+- 更新检查读取 `https://api.github.com/repos/gitLongjie/rustdesk/releases/latest`，桌面、安卓和 Sciter 下载入口均使用本仓库的 Release；不再调用官方版本接口，也不发送设备指纹。用户已有的更新检查和自动更新开关继续生效。版本标签构建先上传草稿，全部构建成功后才发布为正式版本并设为 latest，避免更新到尚未完成的安装包。保留上游打包平台、EXE/MSI 安装流程及其他平台的原有包格式。
 - Flutter 与旧 Sciter 的官网跳转被拦截；帮助和版权文字中仍可能显示官网地址。
 - 自建服务器不再默认禁用 UDP、IPv6 和 WebRTC。用户显式禁用仍生效。现有非 RustDesk 的 STUN/TURN 配置保留。
 - TCP、WebSocket、UDP 控制消息和 WebRTC 数据使用 RDPX。RDPX 是自定义应用协议：报文包含 magic、版本、保留标志和 protobuf 载荷类型，载荷继续使用 protobuf；传输层已经提供报文边界，因此不再重复携带 RustDesk 的明文载荷长度。

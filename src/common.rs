@@ -1027,21 +1027,38 @@ pub fn check_software_update() {
     }
 }
 
-// The endpoint is opt-in through RUSTDESK_VERSION_SERVER.
+fn github_release_url(release: &Value) -> ResultType<String> {
+    let tag = release["tag_name"]
+        .as_str()
+        .context("Missing GitHub release tag")?;
+    let url = release["html_url"]
+        .as_str()
+        .context("Missing GitHub release URL")?;
+    if tag.is_empty()
+        || tag.contains('/')
+        || url != format!("https://github.com/gitLongjie/rustdesk/releases/tag/{tag}")
+    {
+        bail!("Unexpected GitHub release URL");
+    }
+    Ok(url.to_owned())
+}
+
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let (request, url) =
-        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
-    if url.is_empty() {
-        return Ok(());
-    }
+    let url = "https://api.github.com/repos/gitLongjie/rustdesk/releases/latest";
     let proxy_conf = Config::get_socks();
     let tls_url = get_url_for_tls(&url, &proxy_conf);
     let tls_type = get_cached_tls_type(tls_url);
     let is_tls_not_cached = tls_type.is_none();
     let tls_type = tls_type.unwrap_or(TlsType::Rustls);
     let client = create_http_client_async(tls_type, false);
-    let latest_release_response = match client.post(&url).json(&request).send().await {
+    let latest_release_response = match client
+        .get(url)
+        .header("User-Agent", format!("RustDesk/{}", crate::VERSION))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
         Ok(resp) => {
             upsert_tls_cache(tls_url, tls_type, false);
             resp
@@ -1050,7 +1067,12 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
             if is_tls_not_cached && err.is_request() {
                 let tls_type = TlsType::NativeTls;
                 let client = create_http_client_async(tls_type, false);
-                let resp = client.post(&url).json(&request).send().await?;
+                let resp = client
+                    .get(url)
+                    .header("User-Agent", format!("RustDesk/{}", crate::VERSION))
+                    .header("Accept", "application/vnd.github+json")
+                    .send()
+                    .await?;
                 upsert_tls_cache(tls_url, tls_type, false);
                 resp
             } else {
@@ -1058,10 +1080,11 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
             }
         }
     };
-    let bytes = latest_release_response.bytes().await?;
-    let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
-    let response_url = resp.url;
-    if is_public(&response_url) { return Ok(()); }
+    if latest_release_response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let bytes = latest_release_response.error_for_status()?.bytes().await?;
+    let response_url = github_release_url(&serde_json::from_slice(&bytes)?)?;
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
 
     if get_version_number(&latest_release_version) > get_version_number(crate::VERSION) {
@@ -1158,7 +1181,13 @@ fn get_api_server_(api: String, custom: String) -> String {
     }
     let s0 = get_custom_rendezvous_server(custom);
     if !s0.is_empty()
-        && !matches!(s0.as_str(), "remote.brigecode.icu" | "remote.brigecode.icu:21116")
+        && !matches!(
+            s0.as_str(),
+            "remote.brigecode.icu"
+                | "remote.brigecode.icu:21116"
+                | "srs.rtc.testtool.online"
+                | "srs.rtc.testtool.online:21116"
+        )
     {
         let s = crate::increase_port(&s0, -2);
         if s == s0 {
@@ -1167,7 +1196,7 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://remote.brigecode.icu".to_owned()
+    "https://srs.rtc.testtool.online/rustdesk".to_owned()
 }
 
 #[inline]
@@ -3148,19 +3177,33 @@ mod tests {
     }
 
     #[test]
-    fn test_bundled_api_server_without_custom_config() {
-        // The bundled fallback must be the server IP: plain HTTP GETs on the
-        // unregistered domain are hijacked to the DNSPod webblock page.
+    fn test_github_release_url_uses_own_repository() {
+        let mut release = json!({
+            "tag_name": "1.5.1",
+            "html_url": "https://github.com/gitLongjie/rustdesk/releases/tag/1.5.1"
+        });
         assert_eq!(
-            get_api_server_(String::new(), String::new()),
-            "http://82.157.201.157:21114"
+            github_release_url(&release).unwrap(),
+            "https://github.com/gitLongjie/rustdesk/releases/tag/1.5.1"
         );
-        // A manually entered rendezvous server still derives its API host
-        // from what the user typed.
-        for custom in ["remote.brigecode.icu", "remote.brigecode.icu:21116"] {
+        release["html_url"] = json!("https://github.com/rustdesk/rustdesk/releases/tag/1.5.1");
+        assert!(github_release_url(&release).is_err());
+        release["html_url"] = json!("https://rustdesk.com/download");
+        assert!(github_release_url(&release).is_err());
+    }
+
+    #[test]
+    fn test_bundled_api_server_uses_domain_without_custom_config() {
+        for custom in [
+            "",
+            "remote.brigecode.icu",
+            "remote.brigecode.icu:21116",
+            "srs.rtc.testtool.online",
+            "srs.rtc.testtool.online:21116",
+        ] {
             assert_eq!(
                 get_api_server_(String::new(), custom.to_owned()),
-                "https://remote.brigecode.icu"
+                "https://srs.rtc.testtool.online/rustdesk"
             );
         }
     }

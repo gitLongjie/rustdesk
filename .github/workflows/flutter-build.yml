@@ -9,6 +9,9 @@ on:
       upload-tag:
         type: string
         default: "nightly"
+      draft-release:
+        type: boolean
+        default: false
 
 # NOTE: F-Droid builder script 'flutter/build_fdroid.sh' reads environment
 # variables from this workflow!
@@ -45,7 +48,7 @@ env:
   VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
   VCPKG_CMAKE_VERSION: "4.3.0"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836" # 2025.01.13, got "/opt/artifacts/vcpkg/vcpkg: No such file or directory" with latest version
-  VERSION: "1.5.0"
+  VERSION: "1.5.1"
   NDK_VERSION: "r28c"
   #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
@@ -77,6 +80,7 @@ jobs:
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -454,6 +458,7 @@ jobs:
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -616,6 +621,7 @@ jobs:
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         if: env.UPLOAD_ARTIFACT == 'true'
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -959,14 +965,15 @@ jobs:
       - name: Rename rustdesk
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
-          for name in rustdesk*??.dmg; do
-              mv "$name" "${name%%.dmg}-${{ matrix.job.arch }}.dmg"
-          done
+          if [ -f "rustdesk-${{ env.VERSION }}.dmg" ]; then
+            mv "rustdesk-${{ env.VERSION }}.dmg" "rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg"
+          fi
 
       - name: Publish DMG package
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -1029,6 +1036,7 @@ jobs:
       - name: Publish unsigned app
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: rustdesk-${{ env.VERSION }}-unsigned.tar.gz
@@ -1312,6 +1320,7 @@ jobs:
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -1321,6 +1330,7 @@ jobs:
         if: env.ANDROID_SIGNING_KEY == null && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -1497,6 +1507,7 @@ jobs:
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -1506,6 +1517,7 @@ jobs:
         if: env.ANDROID_SIGNING_KEY == null && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -1814,6 +1826,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -1850,6 +1863,7 @@ jobs:
         if: matrix.job.arch == 'x86_64' && env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -2156,6 +2170,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -2400,6 +2415,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -2460,6 +2476,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -2545,6 +2562,7 @@ jobs:
       - name: Publish flatpak package
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
@@ -2629,6 +2647,7 @@ jobs:
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
+          draft: ${{ inputs.draft-release }}
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
