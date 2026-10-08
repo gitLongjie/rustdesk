@@ -1157,7 +1157,10 @@ fn get_api_server_(api: String, custom: String) -> String {
         return api.to_owned();
     }
     let s0 = get_custom_rendezvous_server(custom);
-    if !s0.is_empty() {
+    // The bundled domain's HTTP API redirects to a DNSPod block page.
+    if !s0.is_empty()
+        && !matches!(s0.as_str(), "remote.brigecode.icu" | "remote.brigecode.icu:21116")
+    {
         let s = crate::increase_port(&s0, -2);
         if s == s0 {
             return format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);
@@ -1165,7 +1168,7 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "http://remote.brigecode.icu:21114".to_owned()
+    "http://82.157.201.157:21114".to_owned()
 }
 
 #[inline]
@@ -3143,6 +3146,16 @@ mod tests {
             Duration::from_secs_f64(dur.as_secs_f64() * 0.499 * 1e-9),
             Duration::from_nanos(0)
         );
+    }
+
+    #[test]
+    fn test_bundled_api_server_avoids_domain_block_page() {
+        for custom in ["", "remote.brigecode.icu", "remote.brigecode.icu:21116"] {
+            assert_eq!(
+                get_api_server_(String::new(), custom.to_owned()),
+                "http://82.157.201.157:21114"
+            );
+        }
     }
 
     #[test]
