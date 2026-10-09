@@ -2,6 +2,11 @@ name: Repackage RustDesk 1.5.1 for Apple Silicon
 
 on:
   workflow_dispatch:
+    inputs:
+      release-tag:
+        description: 'Release tag whose Apple Silicon dmg gets repackaged'
+        required: true
+        default: '1.5.1-1'
 
 permissions:
   contents: write
@@ -9,6 +14,7 @@ permissions:
 env:
   GH_TOKEN: ${{ github.token }}
   DMG_NAME: rustdesk-1.5.1-aarch64.dmg
+  RELEASE_TAG: ${{ inputs.release-tag }}
 
 jobs:
   repackage:
@@ -17,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Download the original 1.5.1 package
-        run: gh release download 1.5.1 --repo "$GITHUB_REPOSITORY" --pattern "$DMG_NAME" --dir original
+      - name: Download the original package from the target release
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$DMG_NAME" --dir original
 
       - name: Keep the original package for rollback
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -77,5 +83,5 @@ jobs:
           hdiutil detach "$RUNNER_TEMP/rustdesk-volume"
           shasum -a 256 "repaired/$DMG_NAME"
 
-      - name: Replace only the Apple Silicon asset in release 1.5.1
-        run: gh release upload 1.5.1 "repaired/$DMG_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Replace only the Apple Silicon asset in the target release
+        run: gh release upload "$RELEASE_TAG" "repaired/$DMG_NAME" --repo "$GITHUB_REPOSITORY" --clobber
