@@ -12,7 +12,7 @@ env:
 
 jobs:
   repackage:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,6 +36,9 @@ jobs:
 
       - name: Reproduce the reported signature failure
         run: |
+          app="$RUNNER_TEMP/rustdesk-stage/RustDesk.app"
+          codesign -dv --verbose=4 "$app" 2>&1
+          codesign -dv --verbose=4 "$app/Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS" 2>&1
           set +e
           "$RUNNER_TEMP/rustdesk-stage/RustDesk.app/Contents/MacOS/RustDesk" --version > before.log 2>&1
           launch_status=$?
