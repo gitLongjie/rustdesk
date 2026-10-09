@@ -51,6 +51,12 @@ jobs:
         run: |
           app="$RUNNER_TEMP/rustdesk-stage/RustDesk.app"
           bash ./.github/scripts/sign-macos-app.sh "$app" - ./flutter/macos/Runner/Release.entitlements
+          signature=$(codesign -dv --verbose=4 "$app" 2>&1)
+          echo "$signature"
+          if grep -q 'flags=.*runtime' <<<"$signature"; then
+            echo 'Ad-hoc app must not enable hardened runtime library validation' >&2
+            exit 1
+          fi
           test "$("$app/Contents/MacOS/RustDesk" --version)" = '1.5.1'
           "$app/Contents/MacOS/RustDesk" --no-server > startup.log 2>&1 &
           app_pid=$!
