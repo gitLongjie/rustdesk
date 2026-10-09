@@ -657,12 +657,18 @@ pub fn check_update_as_root() -> ResultType<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::get_download_file_from_url;
+    use super::{get_download_file_from_url, release_asset_version};
+
+    #[test]
+    fn release_asset_version_ignores_release_patch_suffix() {
+        assert_eq!(release_asset_version("1.5.1-1"), "1.5.1");
+        assert_eq!(release_asset_version("1.5.1"), "1.5.1");
+    }
 
     #[test]
     fn update_download_file_accepts_expected_github_asset_urls() {
         let file = get_download_file_from_url(
-            "https://github.com/rustdesk/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
+            "https://github.com/gitLongjie/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
         )
         .expect("valid GitHub release asset URL");
 
@@ -675,16 +681,17 @@ mod tests {
     #[test]
     fn update_download_file_rejects_untrusted_or_malformed_urls() {
         for url in [
-            "http://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
+            "http://github.com/gitLongjie/rustdesk/releases/download/1/rustdesk.exe",
             "https://example.com/rustdesk.exe",
             "https://github.com/other/project/releases/download/1/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/nested/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/C:rustdesk.exe",
-            "https://user@github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com:443/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe?download=1",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe#download",
+            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
+            "https://github.com/gitLongjie/rustdesk/releases/download/1/",
+            "https://github.com/gitLongjie/rustdesk/releases/download/1/nested/rustdesk.exe",
+            "https://github.com/gitLongjie/rustdesk/releases/download/1/C:rustdesk.exe",
+            "https://user@github.com/gitLongjie/rustdesk/releases/download/1/rustdesk.exe",
+            "https://github.com:443/gitLongjie/rustdesk/releases/download/1/rustdesk.exe",
+            "https://github.com/gitLongjie/rustdesk/releases/download/1/rustdesk.exe?download=1",
+            "https://github.com/gitLongjie/rustdesk/releases/download/1/rustdesk.exe#download",
             "not a url",
         ] {
             assert!(get_download_file_from_url(url).is_none(), "{url}");
