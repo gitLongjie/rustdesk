@@ -195,7 +195,7 @@ fn check_update(manually: bool) -> ResultType<()> {
         log::debug!("No update available.");
     } else {
         let download_url = update_url.replace("tag", "download");
-        let version = download_url.split('/').last().unwrap_or_default();
+        let version = release_asset_version(download_url.split('/').last().unwrap_or_default());
         #[cfg(target_os = "windows")]
         let download_url = if cfg!(feature = "flutter") {
             let Some(arch) = crate::platform::windows::release_arch_suffix() else {
@@ -376,7 +376,7 @@ pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let tag = segments.next()?;
     let filename = segments.next()?;
 
-    if owner != "rustdesk"
+    if owner != "gitLongjie"
         || repo != "rustdesk"
         || releases != "releases"
         || download != "download"
@@ -408,6 +408,11 @@ fn is_plain_update_filename(filename: &str) -> bool {
 
 pub fn get_download_file_from_url(url: &str) -> Option<PathBuf> {
     get_update_download_file_from_url(url)
+}
+
+pub fn release_asset_version(tag: &str) -> &str {
+    // Release retry tags keep the package version used by the build workflow.
+    tag.split_once('-').map_or(tag, |(version, _)| version)
 }
 
 /// Queries all active connections (remote, file-transfer, port-forward, camera, terminal)
@@ -587,7 +592,7 @@ pub fn check_update_as_root() -> ResultType<bool> {
         return Ok(false);
     }
     let download_url = update_url.replace("tag", "download");
-    let version = download_url.split('/').last().unwrap_or_default().to_string();
+    let version = release_asset_version(download_url.split('/').last().unwrap_or_default());
     let arch = if std::env::consts::ARCH == "aarch64" { "aarch64" } else { "x86_64" };
     let dmg_url = format!("{}/rustdesk-{}-{}.dmg", download_url, version, arch);
     log::info!("[root-update] New version: {}, downloading from {}", version, dmg_url);
