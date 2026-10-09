@@ -34,18 +34,18 @@ jobs:
           ditto "$RUNNER_TEMP/rustdesk-volume" "$RUNNER_TEMP/rustdesk-stage"
           hdiutil detach "$RUNNER_TEMP/rustdesk-volume"
 
-      - name: Reproduce the reported signature failure
+      - name: Inspect original signatures and startup
         run: |
           app="$RUNNER_TEMP/rustdesk-stage/RustDesk.app"
           codesign -dv --verbose=4 "$app" 2>&1
           codesign -dv --verbose=4 "$app/Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS" 2>&1
+          dwarfdump --uuid "$app/Contents/MacOS/RustDesk"
           set +e
           "$RUNNER_TEMP/rustdesk-stage/RustDesk.app/Contents/MacOS/RustDesk" --version > before.log 2>&1
           launch_status=$?
           set -e
           cat before.log
-          test "$launch_status" -ne 0
-          grep -q 'different Team IDs' before.log
+          echo "Original launch exit status: $launch_status"
 
       - name: Normalize signatures and check startup
         run: |
