@@ -925,6 +925,14 @@ jobs:
           fi
           ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
 
+      - name: Ad-hoc sign app without a developer certificate
+        if: env.MACOS_P12_BASE64 == null && env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          bash ./.github/scripts/sign-macos-app.sh \
+            ./flutter/build/macos/Build/Products/Release/RustDesk.app \
+            - ./flutter/macos/Runner/Release.entitlements
+          ./flutter/build/macos/Build/Products/Release/RustDesk.app/Contents/MacOS/RustDesk --version
+
       - name: create unsigned dmg
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
